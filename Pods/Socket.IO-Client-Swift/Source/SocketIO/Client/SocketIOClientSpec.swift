@@ -26,7 +26,7 @@ import Dispatch
 import Foundation
 
 /// Defines the interface for a SocketIOClient.
-public protocol SocketIOClientSpec : AnyObject {
+public protocol SocketIOClientSpec : class {
     // MARK: Properties
 
     /// A handler that will be called on any event.
@@ -42,17 +42,6 @@ public protocol SocketIOClientSpec : AnyObject {
     ///
     /// **Must** start with a `/`.
     var nsp: String { get }
-
-    /// A view into this socket where emits do not check for binary data.
-    ///
-    /// Usage:
-    ///
-    /// ```swift
-    /// socket.rawEmitView.emit("myEvent", myObject)
-    /// ```
-    ///
-    /// **NOTE**: It is not safe to hold on to this view beyond the life of the socket.
-    var rawEmitView: SocketRawView { get }
 
     /// The status of this client.
     var status: SocketIOStatus { get }
@@ -70,7 +59,7 @@ public protocol SocketIOClientSpec : AnyObject {
     ///
     /// - parameter timeoutAfter: The number of seconds after which if we are not connected we assume the connection
     ///                           has failed. Pass 0 to never timeout.
-    /// - parameter handler: The handler to call when the client fails to connect.
+    /// - parameter withHandler: The handler to call when the client fails to connect.
     func connect(timeoutAfter: Double, withHandler handler: (() -> ())?)
 
     /// Called when the client connects to a namespace. If the client was created with a namespace upfront,
@@ -145,7 +134,7 @@ public protocol SocketIOClientSpec : AnyObject {
     /// - parameter event: The name of the event.
     /// - parameter data: The data that was sent with this event.
     /// - parameter isInternalMessage: Whether this event was sent internally. If `true` it is always sent to handlers.
-    /// - parameter ack: If > 0 then this event expects to get an ack back from the client.
+    /// - parameter withAck: If > 0 then this event expects to get an ack back from the client.
     func handleEvent(_ event: String, data: [Any], isInternalMessage: Bool, withAck ack: Int)
 
     /// Causes a client to handle a socket.io packet. The namespace for the packet must match the namespace of the

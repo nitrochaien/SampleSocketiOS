@@ -67,18 +67,6 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     @objc
     public private(set) weak var manager: SocketManagerSpec?
 
-    /// A view into this socket where emits do not check for binary data.
-    ///
-    /// Usage:
-    ///
-    /// ```swift
-    /// socket.rawEmitView.emit("myEvent", myObject)
-    /// ```
-    ///
-    /// **NOTE**: It is not safe to hold on to this view beyond the life of the socket.
-    @objc
-    public private(set) lazy var rawEmitView = SocketRawView(socket: self)
-
     /// The status of this client.
     @objc
     public private(set) var status = SocketIOStatus.notConnected {
@@ -87,7 +75,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
         }
     }
 
-    let ackHandlers = SocketAckManager()
+    var ackHandlers = SocketAckManager()
 
     private(set) var currentAck = -1
 
@@ -98,7 +86,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     /// Type safe way to create a new SocketIOClient. `opts` can be omitted.
     ///
     /// - parameter manager: The manager for this socket.
-    /// - parameter nsp: The namespace of the socket.
+    /// - parameter socketURL: The url of the socket.io server.
     @objc
     public init(manager: SocketManagerSpec, nsp: String) {
         self.manager = manager
@@ -127,7 +115,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     ///
     /// - parameter timeoutAfter: The number of seconds after which if we are not connected we assume the connection
     ///                           has failed. Pass 0 to never timeout.
-    /// - parameter handler: The handler to call when the client fails to connect.
+    /// - parameter withHandler: The handler to call when the client fails to connect.
     @objc
     open func connect(timeoutAfter: Double, withHandler handler: (() -> ())?) {
         assert(timeoutAfter >= 0, "Invalid timeout: \(timeoutAfter)")
@@ -139,14 +127,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
 
         status = .connecting
 
-        joinNamespace()
-
-        if manager.status == .connected && nsp == "/" {
-            // We might not get a connect event for the default nsp, fire immediately
-            didConnect(toNamespace: nsp)
-
-            return
-        }
+        manager.connectSocket(self)
 
         guard timeoutAfter != 0 else { return }
 
@@ -160,7 +141,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
         }
     }
 
-    func createOnAck(_ items: [Any], binary: Bool = true) -> OnAckCallback {
+    private func createOnAck(_ items: [Any]) -> OnAckCallback {
         currentAck += 1
 
         return OnAckCallback(ackNumber: currentAck, items: items, socket: self)
@@ -202,6 +183,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
         DefaultSocketLogger.Logger.log("Closing socket", type: logType)
 
         leaveNamespace()
+        didDisconnect(reason: "Disconnect")
     }
 
     /// Send an event to the server, with optional data items.
@@ -214,20 +196,25 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     open func emit(_ event: String, _ items: SocketData...) {
         do {
             try emit(event, with: items.map({ try $0.socketRepresentation() }))
-        } catch {
+        } catch let err {
             DefaultSocketLogger.Logger.error("Error creating socketRepresentation for emit: \(event), \(items)",
                                              type: logType)
 
-            handleClientEvent(.error, data: [event, items, error])
+            handleClientEvent(.error, data: [event, items, err])
         }
     }
 
     /// Same as emit, but meant for Objective-C
     ///
     /// - parameter event: The event to send.
-    /// - parameter items: The items to send with this event. Send an empty array to send no data.
+    /// - parameter with: The items to send with this event. Send an empty array to send no data.
     @objc
     open func emit(_ event: String, with items: [Any]) {
+        guard status == .connected else {
+            handleClientEvent(.error, data: ["Tried emitting \(event) when not connected"])
+            return
+        }
+
         emit([event] + items)
     }
 
@@ -253,11 +240,11 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     open func emitWithAck(_ event: String, _ items: SocketData...) -> OnAckCallback {
         do {
             return emitWithAck(event, with: try items.map({ try $0.socketRepresentation() }))
-        } catch {
+        } catch let err {
             DefaultSocketLogger.Logger.error("Error creating socketRepresentation for emit: \(event), \(items)",
                                              type: logType)
 
-            handleClientEvent(.error, data: [event, items, error])
+            handleClientEvent(.error, data: [event, items, err])
 
             return OnAckCallback(ackNumber: -1, items: [], socket: self)
         }
@@ -277,23 +264,23 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     /// ```
     ///
     /// - parameter event: The event to send.
-    /// - parameter items: The items to send with this event. Use `[]` to send nothing.
+    /// - parameter with: The items to send with this event. Use `[]` to send nothing.
     /// - returns: An `OnAckCallback`. You must call the `timingOut(after:)` method before the event will be sent.
     @objc
     open func emitWithAck(_ event: String, with items: [Any]) -> OnAckCallback {
         return createOnAck([event] + items)
     }
 
-    func emit(_ data: [Any], ack: Int? = nil, binary: Bool = true, isAck: Bool = false) {
+    func emit(_ data: [Any], ack: Int? = nil) {
         guard status == .connected else {
             handleClientEvent(.error, data: ["Tried emitting when not connected"])
             return
         }
 
-        let packet = SocketPacket.packetFromEmit(data, id: ack ?? -1, nsp: nsp, ack: isAck, checkForBinary: binary)
+        let packet = SocketPacket.packetFromEmit(data, id: ack ?? -1, nsp: nsp, ack: false)
         let str = packet.packetString
 
-        DefaultSocketLogger.Logger.log("Emitting: \(str), Ack: \(isAck)", type: logType)
+        DefaultSocketLogger.Logger.log("Emitting: \(str)", type: logType)
 
         manager?.engine?.send(str, withData: packet.binary)
     }
@@ -305,7 +292,14 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     /// - parameter ack: The ack number.
     /// - parameter with: The data for this ack.
     open func emitAck(_ ack: Int, with items: [Any]) {
-        emit(items, ack: ack, binary: true, isAck: true)
+        guard status == .connected else { return }
+
+        let packet = SocketPacket.packetFromEmit(items, id: ack, nsp: nsp, ack: true)
+        let str = packet.packetString
+
+        DefaultSocketLogger.Logger.log("Emitting Ack: \(str)", type: logType)
+
+        manager?.engine?.send(str, withData: packet.binary)
     }
 
     /// Called when socket.io has acked one of our emits. Causes the corresponding ack callback to be called.
@@ -314,11 +308,11 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     /// - parameter data: The data sent back with this ack.
     @objc
     open func handleAck(_ ack: Int, data: [Any]) {
-        guard status == .connected else { return }
+        guard status == .connected, let manager = self.manager else { return }
 
         DefaultSocketLogger.Logger.log("Handling ack: \(ack) with data: \(data)", type: logType)
 
-        ackHandlers.executeAck(ack, with: data)
+        ackHandlers.executeAck(ack, with: data, onQueue: manager.handleQueue)
     }
 
     /// Called on socket.io specific events.
@@ -334,7 +328,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     /// - parameter event: The name of the event.
     /// - parameter data: The data that was sent with this event.
     /// - parameter isInternalMessage: Whether this event was sent internally. If `true` it is always sent to handlers.
-    /// - parameter ack: If > 0 then this event expects to get an ack back from the client.
+    /// - parameter withAck: If > 0 then this event expects to get an ack back from the client.
     @objc
     open func handleEvent(_ event: String, data: [Any], isInternalMessage: Bool, withAck ack: Int = -1) {
         guard status == .connected || isInternalMessage else { return }
@@ -372,15 +366,21 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     /// Call when you wish to leave a namespace and disconnect this socket.
     @objc
     open func leaveNamespace() {
+        guard nsp != "/" else { return }
+
+        status = .disconnected
+
         manager?.disconnectSocket(self)
     }
 
     /// Joins `nsp`.
     @objc
     open func joinNamespace() {
+        guard nsp != "/" else { return }
+
         DefaultSocketLogger.Logger.log("Joining namespace \(nsp)", type: logType)
 
-        manager?.connectSocket(self)
+        manager?.engine?.send("0\(nsp)", withData: [])
     }
 
     /// Removes handler(s) for a client event.

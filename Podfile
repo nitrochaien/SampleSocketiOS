@@ -6,6 +6,6 @@ target 'SocketChat' do
   use_frameworks!
 
   # Pods for SocketChat
-pod 'Socket.IO-Client-Swift'
+pod 'Socket.IO-Client-Swift', '~> 13.0.0'
 
 end

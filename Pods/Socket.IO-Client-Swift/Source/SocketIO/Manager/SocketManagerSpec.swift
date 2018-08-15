@@ -46,7 +46,7 @@ import Foundation
 /// or call one of the `disconnectSocket` methods on this class.
 ///
 @objc
-public protocol SocketManagerSpec : AnyObject, SocketEngineClient {
+public protocol SocketManagerSpec : class, SocketEngineClient {
     // MARK: Properties
 
     /// Returns the socket associated with the default namespace ("/").
@@ -62,9 +62,6 @@ public protocol SocketManagerSpec : AnyObject, SocketEngineClient {
     /// The queue that all interaction with the client should occur on. This is the queue that event handlers are
     /// called on.
     var handleQueue: DispatchQueue { get set }
-
-    /// The sockets in this manager indexed by namespace.
-    var nsps: [String: SocketIOClient] { get set }
 
     /// If `true`, this manager will try and reconnect on any disconnects.
     var reconnects: Bool { get set }
@@ -103,27 +100,19 @@ public protocol SocketManagerSpec : AnyObject, SocketEngineClient {
 
     /// Disconnects the socket associated with `forNamespace`.
     ///
-    /// - parameter nsp: The namespace to disconnect from.
+    /// - parameter forNamespace: The namespace to disconnect from.
     func disconnectSocket(forNamespace nsp: String)
 
     /// Sends an event to the server on all namespaces in this manager.
     ///
     /// - parameter event: The event to send.
-    /// - parameter items: The data to send with this event.
+    /// - parameter withItems: The data to send with this event.
     func emitAll(_ event: String, withItems items: [Any])
 
     /// Tries to reconnect to the server.
     ///
     /// This will cause a `disconnect` event to be emitted, as well as an `reconnectAttempt` event.
     func reconnect()
-
-    /// Removes the socket from the manager's control.
-    /// After calling this method the socket should no longer be considered usable.
-    ///
-    /// - parameter socket: The socket to remove.
-    /// - returns: The socket removed, if it was owned by the manager.
-    @discardableResult
-    func removeSocket(_ socket: SocketIOClient) -> SocketIOClient?
 
     /// Returns a `SocketIOClient` for the given namespace. This socket shares a transport with the manager.
     ///
@@ -133,7 +122,7 @@ public protocol SocketManagerSpec : AnyObject, SocketEngineClient {
     /// Call one of the `disconnectSocket` methods on the implementing class to remove the socket from manager control.
     /// Or call `SocketIOClient.disconnect()` on the client.
     ///
-    /// - parameter nsp: The namespace for the socket.
+    /// - parameter forNamespace: The namespace for the socket.
     /// - returns: A `SocketIOClient` for the given namespace.
     func socket(forNamespace nsp: String) -> SocketIOClient
 }

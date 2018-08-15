@@ -25,7 +25,7 @@
 import Foundation
 
 /// Represents a class will log client events.
-public protocol SocketLogger : AnyObject {
+public protocol SocketLogger : class {
     // MARK: Properties
 
     /// Whether to log or not
