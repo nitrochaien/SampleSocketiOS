@@ -12,21 +12,25 @@ import SocketIO
 class SocketIOManager: NSObject {
     static let sharedInstance = SocketIOManager()
     
-    let manager = SocketManager(socketURL: URL(string: "http://192.168.1.150:3002")!)
+    let manager = SocketManager(socketURL: URL(string: "http://192.168.1.30:3000")!)
     
     override init() {
         super.init()
     }
     
     func connect() {
-        manager.connect()
+        let clientSocket = SocketIOClient(manager: SocketManagerSpec.engine, nsp: "/pan689")
+        manager.defaultSocket.connect()
     }
     
     func disconnect() {
-        manager.disconnect()
+        manager.defaultSocket.disconnect()
     }
     
     func connectServer(with nickname: String, completionHandler: @escaping (_ userList: [[String : AnyObject]]) -> Void) {
+        manager.defaultSocket.on(clientEvent: .connect) { (array, ack) in
+            print("Enter connect socket")
+        }
         manager.defaultSocket.emit("connectUser", nickname)
         manager.defaultSocket.on("userList") { (array, ack) in
             completionHandler(array[0] as! [[String : AnyObject]])
